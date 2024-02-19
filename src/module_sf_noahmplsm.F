@@ -6237,7 +6237,6 @@ ENDIF   ! CROPTYPE == 0
   REAL, PARAMETER                                :: intdepth = -22.5  ! Depth used to calculate soil parameters
                                                                       ! for MMF variably thick layer
 
-
   REAL, PARAMETER ::  WSLMAX = 5000.0      !maximum lake water storage (mm)
 
 #ifdef WRF_HYDRO
@@ -6315,7 +6314,7 @@ ENDIF   ! CROPTYPE == 0
 
 
     IF (OPT_ROOT == 2) THEN 
-         IF (ROOT_UPDATE==.TRUE.) THEN                                 ! If model running for at least 1yr,
+         IF (ROOT_UPDATE .eqv. .TRUE.) THEN                            ! If model running for at least 1yr,
              DO IZ = 1, parameters%NROOT                               ! Use root activity function instead of beta
                    ETRANI(IZ) = ETRAN * ROOTACTIVITY(IZ) * 0.001        
              ENDDO
@@ -6417,7 +6416,6 @@ ENDIF   ! CROPTYPE == 0
              CALL SHALLOWWATERTABLE (parameters,NSNOW  ,NSOIL, ZSOIL, DT_soil   , & !in
                             DZSNSO ,SMCEQ   ,ILOC , JLOC, SMCMAXDEEP, PSISATDEEP, & !in
                             SMC    ,ZWT    ,SMCWTD ,RECH, QDRAIN  ) !inout
-
              SH2O(NSOIL) = SMC(NSOIL) - SICE(NSOIL)
              RUNSUB = RUNSUB + QDRAIN !it really comes from subroutine watertable, which is not called with the same frequency as the soil routines here
              WA = 0.0
