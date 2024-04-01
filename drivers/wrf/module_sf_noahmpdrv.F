@@ -666,7 +666,7 @@ CONTAINS
     REAL                                :: DKSATtop 
     REAL                                :: SMCWLTtop 
 
-    REAL                                :: NDAYS
+    REAL                                :: NDAYS        ! Days model has been running in seconds (IOPT_ROOT = 1) 
     
     type(noahmp_parameters) :: parameters
 
@@ -1966,11 +1966,11 @@ SUBROUTINE PEDOTRANSFER_SR2006(nsoil,sand,clay,orgm,parameters)
          &                           allowed_to_read
     INTEGER, INTENT(IN)       ::     sf_urban_physics                              ! urban, by yizhou
 
-    REAL,    DIMENSION( 1:nsoil ), INTENT(IN)       ::     DZS  ! Thickness of the soil layers [m]
+    REAL,    DIMENSION( NSOIL), INTENT(IN)       ::     DZS  ! Thickness of the soil layers [m]
     REAL,    INTENT(IN) , OPTIONAL ::     DX, DY
     REAL,    DIMENSION( ims:ime, jms:jme ) ,  INTENT(IN) , OPTIONAL :: MSFTX,MSFTY
 
-    REAL,    DIMENSION(ims:ime,1:nsoil,jms:jme),                &
+    REAL,    DIMENSION( ims:ime, NSOIL, jms:jme ) ,     &
          &   INTENT(INOUT)    ::     SMOIS,                     &
          &                           SH2O,                      &
          &                           TSLB
@@ -1992,7 +1992,7 @@ SUBROUTINE PEDOTRANSFER_SR2006(nsoil,sand,clay,orgm,parameters)
     REAL, DIMENSION(ims:ime,jms:jme), INTENT(INOUT) :: TMN         !deep soil temperature (k)
     REAL, DIMENSION(ims:ime,jms:jme), INTENT(IN) :: XICE         !sea ice fraction
     INTEGER, DIMENSION(ims:ime,jms:jme), INTENT(INOUT) :: isnowxy     !actual no. of snow layers
-    REAL, DIMENSION(ims:ime,1:nsoil,jms:jme),            INTENT(INOUT) :: zsnsoxy  !snow layer depth [m]
+    REAL, DIMENSION(ims:ime,-2:NSOIL,jms:jme), INTENT(INOUT) :: zsnsoxy  !snow layer depth [m]
     REAL, DIMENSION(ims:ime,-2:              0,jms:jme), INTENT(INOUT) :: tsnoxy   !snow temperature [K]
     REAL, DIMENSION(ims:ime,-2:              0,jms:jme), INTENT(INOUT) :: snicexy  !snow layer ice [mm]
     REAL, DIMENSION(ims:ime,-2:              0,jms:jme), INTENT(INOUT) :: snliqxy  !snow layer liquid water [mm]

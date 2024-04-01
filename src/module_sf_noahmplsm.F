@@ -2232,11 +2232,16 @@ ENDIF   ! CROPTYPE == 0
            if(ZWT .gt. ZSOIL(IZ))exit
          END DO
          KWTD = MIN(IZ,NSOIL)
-         IWTD = IZ-1          ! Layer above water table
+         IWTD = KWTD-1          ! Layer above water table
 
        ! Adjust layer thickness accordingly
          DZSROOT       = DZSNSO(1:NSOIL)
-         DZSROOT(KWTD) = -1*(ZWT-ZSOIL(IWTD))
+
+         IF (IWTD .gt. 0) THEN
+            DZSROOT(KWTD) = -1*(ZWT-ZSOIL(IWTD))
+         ELSE
+            DZSROOT(KWTD) = -1*ZWT
+         END IF
 
        ! Determine layers with active roots - depth of root zone
          INACTIVEDAYS(1:NSOIL) = INACTIVE(1:NSOIL)*DT ! Convert # of inactive timesteps to inactive days (in seconds)
@@ -6316,7 +6321,12 @@ ENDIF   ! CROPTYPE == 0
     IF (OPT_ROOT == 2) THEN 
          IF (ROOT_UPDATE .eqv. .TRUE.) THEN                            ! If model running for at least 1yr,
              DO IZ = 1, parameters%NROOT                               ! Use root activity function instead of beta
+               if ((ILOC == 29) .AND. (JLOC == 55)) then
+                   print*, "IZ", IZ
+                   print*, "ROOTACTIVITY:", ROOTACTIVITY(IZ)
+                   print*, "BTRANI:", BTRANI(IZ)
                    ETRANI(IZ) = ETRAN * ROOTACTIVITY(IZ) * 0.001        
+               end if
              ENDDO
 
              ETRANSUM = 0.0                                            ! Get root water uptake depth GWRD
