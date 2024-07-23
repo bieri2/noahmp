@@ -666,7 +666,7 @@ CONTAINS
     REAL                                :: DKSATtop 
     REAL                                :: SMCWLTtop 
 
-    REAL                                :: NDAYS
+    REAL                                :: NDAYS        ! Days model has been running in seconds (IOPT_ROOT = 1) 
     
     type(noahmp_parameters) :: parameters
 
@@ -1043,7 +1043,7 @@ CONTAINS
          parameters%HSDAY  = HARVEST (I,J)
        end if
 
-       if((iopt_root == 2) .AND. (restart_flag==.FALSE.)) then 
+       if((iopt_root == 2) .AND. (restart_flag .eqv. .FALSE.)) then 
           NDAYS = DT*ITIMESTEP ! calculate number of days model has been running
           ! update variables based on root scheme after one year
           if (NDAYS .GT. 31536000.0) then 
@@ -1058,7 +1058,7 @@ CONTAINS
          print *, "ROOT_UPDATE is ", ROOT_UPDATE
        endif
 
-       if((ROOT_UPDATE == .TRUE.) .AND. (iopt_root == 2)) then
+       if((ROOT_UPDATE.eqv..TRUE.) .AND. (iopt_root == 2)) then
           parameters%NROOT = KROOT  ! update NROOT based on KROOT
        endif
 
@@ -1966,11 +1966,11 @@ SUBROUTINE PEDOTRANSFER_SR2006(nsoil,sand,clay,orgm,parameters)
          &                           allowed_to_read
     INTEGER, INTENT(IN)       ::     sf_urban_physics                              ! urban, by yizhou
 
-    REAL,    DIMENSION( 1:nsoil ), INTENT(IN)       ::     DZS  ! Thickness of the soil layers [m]
+    REAL,    DIMENSION( NSOIL), INTENT(IN)       ::     DZS  ! Thickness of the soil layers [m]
     REAL,    INTENT(IN) , OPTIONAL ::     DX, DY
     REAL,    DIMENSION( ims:ime, jms:jme ) ,  INTENT(IN) , OPTIONAL :: MSFTX,MSFTY
 
-    REAL,    DIMENSION(ims:ime,1:nsoil,jms:jme),                &
+    REAL,    DIMENSION( ims:ime, NSOIL, jms:jme ) ,     &
          &   INTENT(INOUT)    ::     SMOIS,                     &
          &                           SH2O,                      &
          &                           TSLB
@@ -1992,7 +1992,7 @@ SUBROUTINE PEDOTRANSFER_SR2006(nsoil,sand,clay,orgm,parameters)
     REAL, DIMENSION(ims:ime,jms:jme), INTENT(INOUT) :: TMN         !deep soil temperature (k)
     REAL, DIMENSION(ims:ime,jms:jme), INTENT(IN) :: XICE         !sea ice fraction
     INTEGER, DIMENSION(ims:ime,jms:jme), INTENT(INOUT) :: isnowxy     !actual no. of snow layers
-    REAL, DIMENSION(ims:ime,1:nsoil,jms:jme),            INTENT(INOUT) :: zsnsoxy  !snow layer depth [m]
+    REAL, DIMENSION(ims:ime,-2:NSOIL,jms:jme), INTENT(INOUT) :: zsnsoxy  !snow layer depth [m]
     REAL, DIMENSION(ims:ime,-2:              0,jms:jme), INTENT(INOUT) :: tsnoxy   !snow temperature [K]
     REAL, DIMENSION(ims:ime,-2:              0,jms:jme), INTENT(INOUT) :: snicexy  !snow layer ice [mm]
     REAL, DIMENSION(ims:ime,-2:              0,jms:jme), INTENT(INOUT) :: snliqxy  !snow layer liquid water [mm]
@@ -2918,7 +2918,7 @@ EQWTD=WTD
                       FILLLAYERS = .TRUE.
                    ENDIF
                    ! Fill in other layers if FILLAYERS = TRUE
-                   IF ((K .GT. NSOIL_REDUCED+1) .AND. (FILLLAYERS .EQ. .TRUE.)) THEN
+                   IF ((K .GT. NSOIL_REDUCED+1) .AND. (FILLLAYERS .eqv. .TRUE.)) THEN
                      DO NS = K-1,NSOIL_REDUCED+1,-1
                         DDZ = ( ZSOIL(NS-1) - ZSOIL(NS+1) ) * 0.5
                         EXPON = BEXP + 1.       ! Define terms
