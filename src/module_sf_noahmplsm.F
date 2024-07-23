@@ -6321,12 +6321,7 @@ ENDIF   ! CROPTYPE == 0
     IF (OPT_ROOT == 2) THEN 
          IF (ROOT_UPDATE .eqv. .TRUE.) THEN                            ! If model running for at least 1yr,
              DO IZ = 1, parameters%NROOT                               ! Use root activity function instead of beta
-               if ((ILOC == 29) .AND. (JLOC == 55)) then
-                   print*, "IZ", IZ
-                   print*, "ROOTACTIVITY:", ROOTACTIVITY(IZ)
-                   print*, "BTRANI:", BTRANI(IZ)
                    ETRANI(IZ) = ETRAN * ROOTACTIVITY(IZ) * 0.001        
-               end if
              ENDDO
 
              ETRANSUM = 0.0                                            ! Get root water uptake depth GWRD
