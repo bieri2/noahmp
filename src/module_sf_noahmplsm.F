@@ -2229,14 +2229,15 @@ ENDIF   ! CROPTYPE == 0
        IF (OPT_ROOT == 2) THEN
 
          ! Determine layer where water table is located, if within resolved soil layers
-         DZSROOT       = DZSNSO(1:NSOIL)
-         IF(ZWT .lt. ZSOIL(NSOIL)) THEN
+         DZSROOT       = DZSNSO(1:NSOIL) ! Soil thickness variable just for use in root scheme
+
+         IF(ZWT .lt. ZSOIL(NSOIL)) THEN  ! Set KWTD to NSOIL if water table below resolved layers
             KWTD = NSOIL    
          ELSE 
-            DO IZ = 1, NSOIL
-               if(ZWT .gt. ZSOIL(IZ))exit
+            DO IZ = 1, NSOIL             ! Find exact layer with water table if within resolved layers
+               if(ZWT .gt. ZSOIL(IZ))exit 
             END DO
-            KWTD = MIN(IZ,NSOIL)
+            KWTD = MIN(IZ,NSOIL)   ! Layer with water table 
             IWTD = KWTD-1          ! Layer above water table
          
             ! Adjust layer thickness accordingly
@@ -2244,6 +2245,7 @@ ENDIF   ! CROPTYPE == 0
          END IF
 
          ! Determine layers with active roots - depth of root zone
+
          INACTIVEDAYS(1:NSOIL) = INACTIVE(1:NSOIL)*DT ! Convert # of inactive timesteps to inactive days (in seconds)
 
          DO IZ = 1, NSOIL
@@ -2284,6 +2286,7 @@ ENDIF   ! CROPTYPE == 0
          !eliminate small root activity
          WHERE(EASY .lt. 0.001*MAXEASY) EASY = 0.
 
+         ! Allow root water uptake to extend deeper only if needed
          DO IZ = 1, MIN(KROOT+1,NSOIL)
            if(INACTIVEDAYS(IZ) .gt. MAXINACTIVEDAYS .and. EASY(IZ) .lt. MAXEASY) EASY(IZ) = 0.
          ENDDO
