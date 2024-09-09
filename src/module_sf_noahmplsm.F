@@ -2240,11 +2240,7 @@ ENDIF   ! CROPTYPE == 0
             IWTD = KWTD-1          ! Layer above water table
          
             ! Adjust layer thickness accordingly
-            IF (IWTD .gt. 0) THEN
-               DZSROOT(KWTD) = -1*(ZWT-ZSOIL(IWTD))
-            ELSE
-               DZSROOT(KWTD) = -1*ZWT
-            END IF
+            IF (IWTD .ge. 1) DZSROOT(KWTD) = -1*(ZWT-ZSOIL(IWTD))
          END IF
 
          ! Determine layers with active roots - depth of root zone
