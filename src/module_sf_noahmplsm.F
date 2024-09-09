@@ -196,6 +196,10 @@ MODULE MODULE_SF_NOAHMPLSM
                       ! **0 -> No tile drainage
                       !   1 -> on (simple scheme)
                       !   2 -> on (Hooghoudt's scheme)
+   
+  INTEGER :: OPT_ROOT ! dynamic rooting depth scheme (Fan et al. 2017)
+                      !   1 -> off 
+                      !   2 -> on
 
 !------------------------------------------------------------------------------------------!
 ! Physical Constants:                                                                      !
@@ -220,7 +224,7 @@ MODULE MODULE_SF_NOAHMPLSM
   REAL, PARAMETER :: DENICE = 917.0      !density of ice (kg/m3)
 
   INTEGER, PRIVATE, PARAMETER :: MBAND = 2
-  INTEGER, PRIVATE, PARAMETER :: NSOIL = 4
+  INTEGER, PRIVATE, PARAMETER :: NSOIL = 12
   INTEGER, PRIVATE, PARAMETER :: NSTAGE = 8
 
 ! add control for a different soil timestep capability
@@ -489,7 +493,9 @@ contains
                    QEVAC   , QDEWC   , QMELT   ,                               & ! OUT
                    RAIN    , SNOW    , ACC_SSOIL, ACC_QINSUR, ACC_QSEVA      , & ! OUT
                    ACC_ETRANI, HCPCT , EFLXB   , CANHS   ,                     & ! OUT :
-                   ACC_DWATER, ACC_PRCP, ACC_ECAN, ACC_ETRAN, ACC_EDIR         & ! INOUT
+                   ACC_DWATER, ACC_PRCP, ACC_ECAN, ACC_ETRAN, ACC_EDIR       , & ! INOUT
+                   EASY    , ROOTACTIVITY      , INACTIVE, KROOT   , KWTD    , & ! Root scheme variables 
+                   PSI     , GWRD    , FDEPTH  , BTRANI , ROOT_UPDATE &
 #ifdef WRF_HYDRO
                    ,SFCHEADRT, WATBLED                                         & ! IN/OUT :
 #endif
@@ -668,6 +674,17 @@ contains
   REAL                                           :: BEVAP  !soil water evaporation factor (0 - 1)
   REAL, DIMENSION(       1:NSOIL)                :: BTRANI !Soil water transpiration factor (0 - 1)
   REAL                                           :: BTRAN  !soil water transpiration factor (0 - 1)
+  ! Variables necessary for root scheme
+  REAL, DIMENSION(       1:NSOIL), INTENT(INOUT) :: EASY   !root scheme ease function (-)
+  REAL, DIMENSION(       1:NSOIL), INTENT(INOUT) :: ROOTACTIVITY !root activity function (0 - 1)
+  REAL, DIMENSION(       1:NSOIL), INTENT(INOUT) :: INACTIVE     !number of timesteps with inactive roots (-)
+  INTEGER, INTENT(INOUT)                         :: KROOT        !root zone layer depth (-)
+  INTEGER, INTENT(INOUT)                         :: KWTD         !water table layer depth (-)
+  REAL, DIMENSION(       1:NSOIL), INTENT(INOUT) :: PSI          !soil matric potential (m)
+  INTEGER, INTENT(INOUT)                         :: GWRD         !root water uptake depth (m)
+  REAL,    INTENT(IN)                            :: FDEPTH       !e-folding depth of permeability (m)
+  LOGICAL, INTENT(IN)                            :: ROOT_UPDATE  !if TRUE, update model variables based on root scheme
+
   REAL                                           :: QIN    !groundwater recharge [mm/s]
   REAL                                           :: QDIS   !groundwater discharge [mm/s]
   REAL, DIMENSION(       1:NSOIL)                :: SICE   !soil ice content (m3/m3)
@@ -973,7 +990,9 @@ contains
                  EMISSI ,PAH    ,CANHS  ,                         & !out
 		 SHG,SHC,SHB,EVG,EVB,GHV,GHB,IRG,IRC,IRB,TR,EVC,CHLEAF,CHUC,CHV2,CHB2,&
                  EFLXB, HCPCT, ACC_SSOIL, &
-                 JULIAN, SWDOWN, PRCP, FB, GECROS1D )        
+                 JULIAN, SWDOWN, PRCP, FB, GECROS1D, &
+                 EASY   , ROOTACTIVITY  , ZWT   , INACTIVE, KROOT,& ! Root scheme 
+                 KWTD   , PSI   )        
 !jref:end
 
     SICE(:) = MAX(0.0, SMC(:) - SH2O(:))   
@@ -1002,12 +1021,12 @@ contains
                  QIN    ,QDIS   ,PONDING1       ,PONDING2,        &
                  QSNBOT ,QTLDRN ,                                 &
                  QSNSUB ,QSNFRO ,QSUBC  ,QFROC  ,QFRZC  ,QMELTC , &
-                 QEVAC  ,QDEWC  ,ACC_QINSUR ,ACC_QSEVA,ACC_ETRANI &
+                 QEVAC  ,QDEWC  ,ACC_QINSUR ,ACC_QSEVA,ACC_ETRANI,&
+                 ROOTACTIVITY, GWRD, FDEPTH,ROOT_UPDATE& ! Root scheme
 #ifdef WRF_HYDRO
                         ,sfcheadrt,WATBLED                        &
 #endif
                  )  !out
-
 
 ! compute carbon budgets (carbon storages and co2 & bvoc fluxes)
 
@@ -1698,6 +1717,7 @@ ENDIF   ! CROPTYPE == 0
       DO IZ = 1,NSOIL
          END_WB = END_WB + SMC(IZ) * DZSNSO(IZ) * 1000.0
       END DO
+
       ! accumualted water change (only for canopy and snow during non-soil timestep)
       ACC_DWATER = ACC_DWATER + (END_WB - BEG_WB)  ! snow, canopy, and soil water change
       ACC_PRCP   = ACC_PRCP   + PRCP * DT        ! accumulated precip 
@@ -1723,6 +1743,7 @@ ENDIF   ! CROPTYPE == 0
            call wrf_message(trim(message))
            WRITE(message,'(i6,i6,f10.3,10f10.5)')ILOC,JLOC,ACC_DWATER,ACC_PRCP,IRMIRATE*1000.0,&
                 IRFIRATE*1000.0,ACC_ECAN,ACC_EDIR,ACC_ETRAN,RUNSRF,RUNSUB,ZWT,QTLDRN
+           
            call wrf_message(trim(message))
            call wrf_error_fatal("Water budget problem in NOAHMP LSM")
         END IF
@@ -1763,7 +1784,8 @@ ENDIF   ! CROPTYPE == 0
                      Q1     ,Q2V    ,Q2B    ,Q2E    ,CHV  ,CHB, EMISSI, PAH, CANHS, &
 		     SHG,SHC,SHB,EVG,EVB,GHV,GHB,IRG,IRC,IRB,TR,EVC,CHLEAF,CHUC,CHV2,CHB2, &
                      EFLXB  ,HCPCT  ,ACC_SSOIL, &
-                     JULIAN, SWDOWN, PRCP, FB, GECROS1D )        
+                     JULIAN, SWDOWN, PRCP, FB, GECROS1D, &
+                     EASY, ROOTACTIVITY, ZWT, INACTIVE, KROOT, KWTD, PSIZ) ! Root scheme
 !jref:end                            
 
 ! --------------------------------------------------------------------------------------------------
@@ -1978,6 +2000,24 @@ ENDIF   ! CROPTYPE == 0
   REAL                                              :: PSI    !surface layer soil matrix potential (m)
   REAL                                              :: RHSUR  !raltive humidity in surface soil/snow air space (-)
 
+! Root scheme variables 
+  REAL                                              :: HCAN   !canopy height (m)
+  REAL                                              :: SOILFACTOR      ! for root scheme calculation, indicates if frozen
+  REAL,   DIMENSION(1:NSOIL),INTENT(INOUT)          :: EASY            ! ease function for root water uptake (-)
+  REAL,   DIMENSION(1:NSOIL)                        :: INACTIVEDAYS    ! number of days without active roots (s)
+  REAL                                              :: MAXINACTIVEDAYS ! max number of days without active roots (s)
+  INTEGER,INTENT(INOUT)                             :: KROOT           ! layer depth of root zone (-)
+  INTEGER,DIMENSION(1:NSOIL)                        :: ROOTMASK        ! mask for layers without active roots (-)
+  REAL                                              :: TOTEASY, MAXEASY! variables needed for root scheme calculation
+  REAL,   DIMENSION(1:NSOIL),INTENT(INOUT)          :: ROOTACTIVITY    ! root activity function (0 - 1)
+  REAL                      ,INTENT(IN)             :: ZWT             ! depth to water table (m)
+  REAL,   DIMENSION(1:NSOIL),INTENT(INOUT)          :: INACTIVE        ! number of timesteps without active roots (-)
+  INTEGER,INTENT(INOUT)                             :: KWTD            ! layer depth of water table (-)
+  INTEGER                                           :: IWTD           
+  REAL,   DIMENSION(1:NSOIL),INTENT(INOUT)          :: PSIZ            ! soil matric potential (m)
+  REAL                                              :: MID             ! depth of layer midpoints (m)
+  REAL,   DIMENSION(1:NSOIL)                        :: DZSROOT         ! layer thickness defined in root scheme (m)
+
 ! temperature and fluxes over vegetated fraction
 
   REAL                                              :: TAUXV  !wind stress: e-w dir [n/m2]
@@ -2027,7 +2067,20 @@ ENDIF   ! CROPTYPE == 0
 
   REAL, PARAMETER                   :: MPE    = 1.E-6
   REAL, PARAMETER                   :: PSIWLT = -150.0  !metric potential for wilting point (m)
+  REAL, PARAMETER                   :: PSILF  = -204.0  ! leaf wilting point matric potential (m) 
   REAL, PARAMETER                   :: Z0     = 0.002   ! Bare-soil roughness length (m) (i.e., under the canopy)
+
+
+! initialize root scheme variables
+
+    maxinactivedays = 365*86400
+    rootmask        = 0               
+    easy            = 0.0                  
+    rootactivity    = 0.0          
+    inactivedays    = 0.0         
+    kroot           = 0                  
+    kwtd            = 0                  
+    psiz            = 0.0      
 
 ! ---------------------------------------------------------------------------------------------------
 ! initialize fluxes from veg. fraction
@@ -2145,7 +2198,8 @@ ENDIF   ! CROPTYPE == 0
 
 ! soil moisture factor controlling stomatal resistance
    
-     BTRAN = 0.0
+     BTRAN  = 0.0
+     BTRANI = 0.0
 
      IF(IST ==1 ) THEN
        DO IZ = 1, parameters%NROOT
@@ -2168,6 +2222,94 @@ ENDIF   ! CROPTYPE == 0
        BTRAN = MAX(MPE,BTRAN)
 
        BTRANI(1:parameters%NROOT) = BTRANI(1:parameters%NROOT)/BTRAN
+
+
+     ! Root water uptake scheme (Fan et al. 2017) ------------------------------------------------
+
+       IF (OPT_ROOT == 2) THEN
+       ! Determine layer where water table is located, if within resolved soil layers
+         DO IZ = 1, NSOIL
+           if(ZWT .gt. ZSOIL(IZ))exit
+         END DO
+         KWTD = MIN(IZ,NSOIL)
+         IWTD = KWTD-1          ! Layer above water table
+
+       ! Adjust layer thickness accordingly
+         DZSROOT       = DZSNSO(1:NSOIL)
+
+         IF (IWTD .gt. 0) THEN
+            DZSROOT(KWTD) = -1*(ZWT-ZSOIL(IWTD))
+         ELSE
+            DZSROOT(KWTD) = -1*ZWT
+         END IF
+
+       ! Determine layers with active roots - depth of root zone
+         INACTIVEDAYS(1:NSOIL) = INACTIVE(1:NSOIL)*DT ! Convert # of inactive timesteps to inactive days (in seconds)
+         DO IZ = 1, NSOIL
+          if(INACTIVEDAYS(IZ) .gt. MAXINACTIVEDAYS)exit
+         END DO
+         KROOT = MIN(IZ-1,NSOIL)        ! Bottom layer of root zone
+
+         HCAN  = parameters%HVT*(2./3.) ! Canopy height
+
+         ! Start calculation of ease function and root activity
+         DO IZ = 1, MIN(KROOT, KWTD)
+           IF (IZ==1) THEN            ! Get layer midpoints
+             MID = -0.05
+           ELSE
+             MID =  0.5 * (ZSOIL(IZ-1) + ZSOIL(IZ))
+           ENDIF
+
+         ! Calculate PSI
+           PSIZ(IZ) = MAX(PSIWLT,-parameters%PSISAT(IZ)*(MAX(0.01,SH2O(IZ))/parameters%SMCMAX(IZ))**(-parameters%BEXP(IZ)) )
+
+           if(INACTIVEDAYS(IZ).le.MAXINACTIVEDAYS) ROOTMASK(IZ) = 1    ! Set root mask accordingly
+
+         ! Account for frozen soil
+           IF(ICE.eq.0) THEN
+             SOILFACTOR = 1.
+           ELSE
+             SOILFACTOR = 0.
+           ENDIF
+
+         ! Calculate ease function
+           EASY(IZ) = MAX(-( PSILF - PSIZ(IZ) )*SOILFACTOR / ( HCAN-MID ), 0.)
+         END DO
+
+         !to grow roots anew, the layer has to be easiest to get water from than the
+         !current active layers with roots
+         MAXEASY = MAXVAL(EASY, ROOTMASK == 1)
+
+         !eliminate small root activity
+         WHERE(EASY .lt. 0.001*MAXEASY) EASY = 0.
+
+         DO IZ = 1, KROOT
+           if(INACTIVEDAYS(IZ) .gt. MAXINACTIVEDAYS .and. EASY(IZ) .lt. MAXEASY) EASY(IZ) = 0.
+         ENDDO
+
+         ! Calculate root activity
+         TOTEASY = SUM(EASY*DZSROOT(1:NSOIL))
+         IF(TOTEASY .eq. 0.)THEN
+           ROOTACTIVITY = 0.
+         ELSE
+           ROOTACTIVITY = MIN(MAX((EASY*DZSROOT(1:NSOIL)) / TOTEASY , 0. ), 1. )
+         ENDIF
+
+         ! Increment or restart inactive timestep count based on root activity
+         DO IZ = 1, NSOIL
+           IF(EASY(IZ) .eq. 0.)THEN
+             INACTIVE(IZ) = INACTIVE(IZ) + 1
+           ELSE
+             INACTIVE(IZ) = 0
+           ENDIF
+         ENDDO
+
+         INACTIVEDAYS = MIN(INACTIVEDAYS,MAXINACTIVEDAYS+1)
+    
+       ENDIF
+
+     ! /CB - end of roots ---------------------------------------------------------
+
      END IF
 
 ! soil surface resistance for ground evap.
@@ -5963,7 +6105,8 @@ ENDIF   ! CROPTYPE == 0
                     QIN    ,QDIS   ,PONDING1       ,PONDING2,        &
                     QSNBOT ,QTLDRN ,                                 &
                     QSNSUB ,QSNFRO ,QSUBC  ,QFROC  ,QFRZC  ,QMELTC , &
-                    QEVAC  ,QDEWC  ,ACC_QINSUR,ACC_QSEVA ,ACC_ETRANI &
+                    QEVAC  ,QDEWC  ,ACC_QINSUR,ACC_QSEVA ,ACC_ETRANI,&
+                    ROOTACTIVITY, GWRD, FDEPTH,ROOT_UPDATE& ! Root scheme
 #ifdef WRF_HYDRO
                         ,sfcheadrt ,WATBLED                          &
 #endif
@@ -6008,6 +6151,9 @@ ENDIF   ! CROPTYPE == 0
   REAL                           , INTENT(IN)    :: QSNOW   !snow at ground srf (mm/s) [+]
   REAL                           , INTENT(IN)    :: QRAIN   !rain at ground srf (mm) [+]
   REAL                           , INTENT(IN)    :: SNOWHIN !snow depth increasing rate (m/s)
+  REAL, DIMENSION(       1:NSOIL), INTENT(IN)    :: ROOTACTIVITY ! Root activity function
+  REAL                           , INTENT(IN)    :: FDEPTH       ! E-folding depth of permeability 
+  LOGICAL                        , INTENT(IN)    :: ROOT_UPDATE  ! if TRUE, update model variables based on root scheme
 
 ! input/output
   INTEGER,                         INTENT(INOUT) :: ISNOW   !actual no. of snow layers
@@ -6034,6 +6180,7 @@ ENDIF   ! CROPTYPE == 0
   REAL,                            INTENT(INOUT) :: DEEPRECH !recharge to or from the water table when deep [m]
   REAL,                            INTENT(INOUT) :: RECH !recharge to or from the water table when shallow [m] (diagnostic)
   REAL,                            INTENT(INOUT) :: QTLDRN   !tile drainage (mm) per soil timestep
+  INTEGER,                         INTENT(INOUT) :: GWRD    ! Layer depth of root water uptake [-]
   REAL,                            INTENT(IN)    :: DX
   REAL,                            INTENT(IN)    :: TDFRACMP !tile drain fraction map
 
@@ -6089,6 +6236,11 @@ ENDIF   ! CROPTYPE == 0
   real                                           :: qinsur_avg
   real                                           :: qseva_avg
   real, dimension(1:nsoil)                       :: etrani_avg
+  REAL                                           :: ETRANSUM          ! ETRAN sum over soil layers 
+  REAL                                           :: SMCMAXDEEP        ! SMCMAX for MMF variably thick layer
+  REAL                                           :: PSISATDEEP        ! PSISAT for MMF variably thick layer
+  REAL, PARAMETER                                :: intdepth = -22.5  ! Depth used to calculate soil parameters
+                                                                      ! for MMF variably thick layer
 
   REAL, PARAMETER ::  WSLMAX = 5000.0      !maximum lake water storage (mm)
 
@@ -6105,6 +6257,10 @@ ENDIF   ! CROPTYPE == 0
    RUNSRF          = 0.0
    QINSUR          = 0.0
    QTLDRN          = 0.0
+
+! Calculate soil properties for variably thick layer
+   SMCMAXDEEP = parameters%SMCMAX(1)*max(min(exp((intdepth+1.5)/FDEPTH),1.),0.1)
+   PSISATDEEP = parameters%PSISAT(1)*min(max(exp(-(intdepth+1.5)/FDEPTH),1.),10.)
 
 ! canopy-intercepted snowfall/rainfall, drips, and throughfall
 
@@ -6161,9 +6317,37 @@ ENDIF   ! CROPTYPE == 0
 
     QSEVA  = QSEVA * 0.001 
 
-    DO IZ = 1, parameters%NROOT
-       ETRANI(IZ) = ETRAN * BTRANI(IZ) * 0.001
-    ENDDO
+
+    IF (OPT_ROOT == 2) THEN 
+         IF (ROOT_UPDATE .eqv. .TRUE.) THEN                            ! If model running for at least 1yr,
+             DO IZ = 1, parameters%NROOT                               ! Use root activity function instead of beta
+                   ETRANI(IZ) = ETRAN * ROOTACTIVITY(IZ) * 0.001        
+             ENDDO
+
+             ETRANSUM = 0.0                                            ! Get root water uptake depth GWRD
+             DO IZ = 1, NSOIL                                          ! Depth above which 95% of 
+                   ETRANSUM = ETRANSUM + (ETRAN*ROOTACTIVITY(IZ))      ! root water uptake occurs
+                   IF (ETRAN==0.0) THEN                                ! If ETRAN is 0, then GWRD is set to first layer
+                       GWRD = 1                                        ! and loop exits
+                       EXIT
+                   ELSE IF ((ETRANSUM/ETRAN) .ge. 0.95) THEN           ! If reached layer where 95% of uptake has    
+                       GWRD = MAX(IZ,1)                                ! occurred, save layer depth as root water uptake 
+                       EXIT                                            ! depth GWRD and exit loop
+                   ELSE IF (IZ .EQ. NSOIL) THEN                        ! If reached bottom of resolved soil layers, set
+                       GWRD = IZ                                       ! GWRD to depth of bottom layer
+                   ENDIF
+             ENDDO
+
+         ELSE     
+             DO IZ = 1, parameters%NROOT                               ! If model running for less than 1yr,          
+                   ETRANI(IZ) = ETRAN * BTRANI(IZ) * 0.001             ! use beta function 
+             ENDDO
+         END IF                                           
+    ELSE
+          DO IZ = 1, parameters%NROOT                                  ! If root scheme not activated, 
+                ETRANI(IZ) = ETRAN * BTRANI(IZ) * 0.001                ! use beta in ETRANI calculation
+          ENDDO
+    ENDIF
 
 #ifdef WRF_HYDRO
        QINSUR = QINSUR+sfcheadrt/DT*0.001  !sfcheadrt units (m)
@@ -6207,7 +6391,7 @@ ENDIF   ! CROPTYPE == 0
            WSLAKE = WSLAKE + (QINSUR_avg-QSEVA_avg)*1000.0*Dt_soil - RUNSRF   !mm per soil timestep
        ELSE                                                      ! soil
            CALL  SOILWATER (parameters,NSOIL  ,NSNOW  ,DT_soil ,ZSOIL  ,DZSNSO , & !in
-                            QINSUR_avg,QSEVA_avg,ETRANI_avg,SICE   ,ILOC   , JLOC ,     & !in
+                            QINSUR_avg,QSEVA_avg,ETRANI_avg,SICE   ,ILOC   , JLOC , SMCMAXDEEP, & !in
                             TDFRACMP,DX    ,                                    & !in
                             SH2O   ,SMC    ,ZWT    ,VEGTYP ,                    & !inout
                             SMCWTD, DEEPRECH,                                   & !inout
@@ -6216,7 +6400,6 @@ ENDIF   ! CROPTYPE == 0
                             ,WATBLED                                            & !in for tile drainage
 #endif
                             )
- 
           IF(OPT_RUN == 1) THEN 
              CALL GROUNDWATER (parameters,NSNOW  ,NSOIL  ,DT_soil  ,SICE   ,ZSOIL  , & !in
                                STC    ,WCND   ,FCRMAX ,ILOC   ,JLOC   , & !in
@@ -6236,9 +6419,8 @@ ENDIF   ! CROPTYPE == 0
  
           IF(OPT_RUN == 5) THEN
              CALL SHALLOWWATERTABLE (parameters,NSNOW  ,NSOIL, ZSOIL, DT_soil   , & !in
-                            DZSNSO ,SMCEQ   ,ILOC , JLOC        , & !in
+                            DZSNSO ,SMCEQ   ,ILOC , JLOC, SMCMAXDEEP, PSISATDEEP, & !in
                             SMC    ,ZWT    ,SMCWTD ,RECH, QDRAIN  ) !inout
-
              SH2O(NSOIL) = SMC(NSOIL) - SICE(NSOIL)
              RUNSUB = RUNSUB + QDRAIN !it really comes from subroutine watertable, which is not called with the same frequency as the soil routines here
              WA = 0.0
@@ -7227,7 +7409,7 @@ ENDIF   ! CROPTYPE == 0
 !== begin soilwater ================================================================================
 
   SUBROUTINE SOILWATER (parameters,NSOIL  ,NSNOW ,DT ,ZSOIL  ,DZSNSO , & !in
-                        QINSUR ,QSEVA  ,ETRANI ,SICE   ,ILOC   , JLOC, & !in
+                        QINSUR ,QSEVA  ,ETRANI ,SICE   ,ILOC   , JLOC, SMCMAXDEEP, & !in
                         TDFRACMP, DX   ,                               & !in
                         SH2O   ,SMC    ,ZWT    ,VEGTYP ,               & !inout
                         SMCWTD, DEEPRECH,                              & !inout
@@ -7258,6 +7440,8 @@ ENDIF   ! CROPTYPE == 0
   REAL, DIMENSION(1:NSOIL), INTENT(IN)    :: SICE   !soil ice content [m3/m3]
   REAL,                     INTENT(IN)    :: DX
   REAL,                     INTENT(IN)    :: TDFRACMP! tile drainage map(fraction)
+  REAL,                        INTENT(IN) :: SMCMAXDEEP ! Soil moisture at saturation for variably thick layer
+
   INTEGER,                     INTENT(IN) :: VEGTYP
 
 ! input & output
@@ -7461,14 +7645,15 @@ ENDIF   ! CROPTYPE == 0
                            ZSOIL,QINSUR,FACC,PDDUM,RUNSRF)
        END IF
 
+
        CALL SRT   (parameters,NSOIL  ,ZSOIL  ,DTFINE ,PDDUM  ,ETRANI , & !in
                    QSEVA  ,SH2O   ,SMC    ,ZWT    ,FCR    , & !in
                    SICEMAX,FCRMAX ,ILOC   ,JLOC   ,SMCWTD ,         & !in
                    RHSTT  ,AI     ,BI     ,CI     ,QDRAIN , & !out
                    WCND   )                                   !out
-  
+ 
        CALL SSTEP (parameters,NSOIL  ,NSNOW  ,DTFINE ,ZSOIL  ,DZSNSO , & !in
-                   SICE   ,ILOC   ,JLOC   ,ZWT            ,                 & !in
+                   SICE   ,ILOC   ,JLOC   ,ZWT            , SMCMAXDEEP, & !in
                    SH2O   ,SMC    ,AI     ,BI     ,CI     , & !inout
                    RHSTT  ,SMCWTD ,QDRAIN ,DEEPRECH,                                 & !inout
                    WPLUS)                                     !out
@@ -7521,7 +7706,6 @@ ENDIF   ! CROPTYPE == 0
       DO IZ = 1, NSOIL
          MLIQ(IZ) = SH2O(IZ)*DZSNSO(IZ)*1000.0
       END DO
-
       WATMIN = 0.01           ! mm
       DO IZ = 1, NSOIL-1
           IF (MLIQ(IZ) .LT. 0.0) THEN
@@ -7532,7 +7716,6 @@ ENDIF   ! CROPTYPE == 0
           MLIQ(IZ  ) = MLIQ(IZ  ) + XS
           MLIQ(IZ+1) = MLIQ(IZ+1) - XS
       END DO
-
         IZ = NSOIL
         IF (MLIQ(IZ) .LT. WATMIN) THEN
            XS = WATMIN-MLIQ(IZ)
@@ -7843,7 +8026,7 @@ ENDIF   ! CROPTYPE == 0
 !== begin sstep ====================================================================================
 
   SUBROUTINE SSTEP (parameters,NSOIL  ,NSNOW  ,DT     ,ZSOIL  ,DZSNSO , & !in
-                    SICE   ,ILOC   ,JLOC   ,ZWT            ,                 & !in
+                    SICE   ,ILOC   ,JLOC   ,ZWT    ,SMCMAXDEEP,         & !in
                     SH2O   ,SMC    ,AI     ,BI     ,CI     , & !inout
                     RHSTT  ,SMCWTD ,QDRAIN ,DEEPRECH,                                 & !inout
                     WPLUS  )                                   !out
@@ -7865,6 +8048,7 @@ ENDIF   ! CROPTYPE == 0
     REAL, DIMENSION(       1:NSOIL), INTENT(IN) :: ZSOIL
     REAL, DIMENSION(       1:NSOIL), INTENT(IN) :: SICE
     REAL, DIMENSION(-NSNOW+1:NSOIL), INTENT(IN) :: DZSNSO ! snow/soil layer thickness [m]
+    REAL,                            INTENT(IN) :: SMCMAXDEEP ! Soil moisture at saturation for variably thick layer
 
 !input and output
     REAL, DIMENSION(1:NSOIL), INTENT(INOUT) :: SH2O
@@ -7925,10 +8109,10 @@ ENDIF   ! CROPTYPE == 0
         DEEPRECH =  DEEPRECH + DT * QDRAIN
      ELSE
         SMCWTD = SMCWTD + DT * QDRAIN  / DZSNSO(NSOIL)
-        WPLUS        = MAX((SMCWTD-parameters%SMCMAX(NSOIL)), 0.0) * DZSNSO(NSOIL)
+        WPLUS        = MAX((SMCWTD-SMCMAXDEEP), 0.0) * DZSNSO(NSOIL)
         WMINUS       = MAX((1.0E-4-SMCWTD), 0.0) * DZSNSO(NSOIL)
 
-        SMCWTD = MAX( MIN(SMCWTD,parameters%SMCMAX(NSOIL)) , 1.0E-4)
+        SMCWTD = MAX( MIN(SMCWTD,SMCMAXDEEP) , 1.0E-4)
         SH2O(NSOIL)    = SH2O(NSOIL) + WPLUS/DZSNSO(NSOIL)
 
 !reduce fluxes at the bottom boundaries accordingly
@@ -9767,7 +9951,7 @@ END SUBROUTINE RR2
 !== begin shallowwatertable ========================================================================
 
   SUBROUTINE SHALLOWWATERTABLE (parameters,NSNOW  ,NSOIL  ,ZSOIL, DT    , & !in
-                         DZSNSO ,SMCEQ ,ILOC   ,JLOC         , & !in
+                         DZSNSO ,SMCEQ ,ILOC   ,JLOC, SMCMAXDEEP, PSISATDEEP, & !in
                          SMC    ,WTD   ,SMCWTD ,RECH, QDRAIN  )  !inout
 ! ----------------------------------------------------------------------
 !Diagnoses water table depth and computes recharge when the water table is within the resolved soil layers,
@@ -9784,6 +9968,8 @@ END SUBROUTINE RR2
   REAL, DIMENSION(       1:NSOIL), INTENT(IN) :: ZSOIL !depth of soil layer-bottom [m]
   REAL, DIMENSION(-NSNOW+1:NSOIL), INTENT(IN) :: DZSNSO ! snow/soil layer thickness [m]
   REAL,  DIMENSION(      1:NSOIL), INTENT(IN) :: SMCEQ  !equilibrium soil water  content [m3/m3]
+  REAL,                            INTENT(IN) :: SMCMAXDEEP  ! Soil moisture at saturation for variably thick layer 
+  REAL,                            INTENT(IN) :: PSISATDEEP  ! Saturated soil matric potential for variably thick layer
 
 ! input and output
   REAL,  DIMENSION(      1:NSOIL), INTENT(INOUT) :: SMC   !total soil water  content [m3/m3]
@@ -9864,41 +10050,41 @@ ZSOIL0(0) = 0.0
 !                   QDRAIN = QDRAIN - 1000 * (SMCEQ(NSOIL)-SMC(NSOIL)) * DZSNSO(NSOIL) / DT
 !                   SMC(NSOIL)=SMCEQ(NSOIL)
 !adjust wtd in the ficticious layer below
-                   SMCEQDEEP = parameters%SMCMAX(NSOIL) * ( -parameters%PSISAT(NSOIL) / ( -parameters%PSISAT(NSOIL) - DZSNSO(NSOIL) ) ) ** (1.0/parameters%BEXP(NSOIL))
+                   SMCEQDEEP = SMCMAXDEEP * ( -PSISATDEEP / ( -PSISATDEEP - DZSNSO(NSOIL) ) ) ** (1.0/parameters%BEXP(NSOIL))
                    WTD = MIN( ( SMCWTD*DZSNSO(NSOIL) &
-                   - SMCEQDEEP*ZSOIL0(NSOIL) + parameters%SMCMAX(NSOIL)*(ZSOIL0(NSOIL)-DZSNSO(NSOIL)) ) / &
-                       ( parameters%SMCMAX(NSOIL)-SMCEQDEEP ) , ZSOIL0(NSOIL) )
+                   - SMCEQDEEP*ZSOIL0(NSOIL) + SMCMAXDEEP*(ZSOIL0(NSOIL)-DZSNSO(NSOIL)) ) / &
+                       ( SMCMAXDEEP-SMCEQDEEP ) , ZSOIL0(NSOIL) )
                    RECH = RECH - (WTDOLD-WTD) * &
-                                 (parameters%SMCMAX(NSOIL)-SMCEQDEEP)
+                                 (SMCMAXDEEP-SMCEQDEEP)
                 ENDIF
             
             ENDIF
         ELSEIF(WTD.GE.ZSOIL0(NSOIL)-DZSNSO(NSOIL))THEN
 !if wtd was already below the bottom of the resolved soil crust
            WTDOLD=WTD
-           SMCEQDEEP = parameters%SMCMAX(NSOIL) * ( -parameters%PSISAT(NSOIL) / ( -parameters%PSISAT(NSOIL) - DZSNSO(NSOIL) ) ) ** (1.0/parameters%BEXP(NSOIL))
+           SMCEQDEEP = SMCMAXDEEP * ( -PSISATDEEP / ( -PSISATDEEP - DZSNSO(NSOIL) ) ) ** (1.0/parameters%BEXP(NSOIL))
            IF(SMCWTD.GT.SMCEQDEEP)THEN
                WTD = MIN( ( SMCWTD*DZSNSO(NSOIL) &
-                 - SMCEQDEEP*ZSOIL0(NSOIL) + parameters%SMCMAX(NSOIL)*(ZSOIL0(NSOIL)-DZSNSO(NSOIL)) ) / &
-                     ( parameters%SMCMAX(NSOIL)-SMCEQDEEP ) , ZSOIL0(NSOIL) )
-               RECH = -(WTDOLD-WTD) * (parameters%SMCMAX(NSOIL)-SMCEQDEEP)
+                 - SMCEQDEEP*ZSOIL0(NSOIL) + SMCMAXDEEP*(ZSOIL0(NSOIL)-DZSNSO(NSOIL)) ) / &
+                     ( SMCMAXDEEP-SMCEQDEEP ) , ZSOIL0(NSOIL) )
+               RECH = -(WTDOLD-WTD) * (SMCMAXDEEP-SMCEQDEEP)
            ELSE
-               RECH = -(WTDOLD-(ZSOIL0(NSOIL)-DZSNSO(NSOIL))) * (parameters%SMCMAX(NSOIL)-SMCEQDEEP)
+               RECH = -(WTDOLD-(ZSOIL0(NSOIL)-DZSNSO(NSOIL))) * (SMCMAXDEEP-SMCEQDEEP)
                WTDOLD=ZSOIL0(NSOIL)-DZSNSO(NSOIL)
 !and now even further down
-               DZUP=(SMCEQDEEP-SMCWTD)*DZSNSO(NSOIL)/(parameters%SMCMAX(NSOIL)-SMCEQDEEP)
+               DZUP=(SMCEQDEEP-SMCWTD)*DZSNSO(NSOIL)/(SMCMAXDEEP-SMCEQDEEP)
                WTD=WTDOLD-DZUP
-               RECH = RECH - (parameters%SMCMAX(NSOIL)-SMCEQDEEP)*DZUP
+               RECH = RECH - (SMCMAXDEEP-SMCEQDEEP)*DZUP
                SMCWTD=SMCEQDEEP
            ENDIF
 
          
          ENDIF
 
-IF(IWTD .LT. NSOIL .AND. IWTD .GT. 0) THEN
-  SMCWTD=parameters%SMCMAX(IWTD)
-ELSEIF(IWTD .LT. NSOIL .AND. IWTD .LE. 0) THEN
-  SMCWTD=parameters%SMCMAX(1)
+IF(IWTD.LT.NSOIL) THEN
+
+  SMCWTD = SMCMAXDEEP
+
 END IF
 
 END  SUBROUTINE SHALLOWWATERTABLE
@@ -11023,7 +11209,7 @@ END SUBROUTINE EMERG
   subroutine noahmp_options( idveg    ,iopt_crs  ,iopt_btr  ,iopt_run  ,iopt_sfc  ,iopt_frz , & 
                              iopt_inf ,iopt_rad  ,iopt_alb  ,iopt_snf  ,iopt_tbot ,iopt_stc , &
 			     iopt_rsf ,iopt_soil ,iopt_pedo ,iopt_crop ,iopt_irr  ,iopt_irrm, &
-                             iopt_infdv, iopt_tdrn)
+                             iopt_infdv, iopt_tdrn, iopt_root)
 
   implicit none
 
@@ -11055,6 +11241,8 @@ END SUBROUTINE EMERG
                                     ! 3 -> flood irrigation ON
   INTEGER,  INTENT(IN) :: iopt_infdv!infiltration options for dynamic VIC (1->Philip; 2-> Green-Ampt;3->Smith-Parlange)
   INTEGER,  INTENT(IN) :: iopt_tdrn !tile drainage (0->none; 1-> simple 2->Hooghoudt's)
+  INTEGER,  INTENT(IN) :: iopt_root !dynamic rooting depth scheme (Fan et al. 2017) (1 -> off ; 2 -> on)
+
 ! -------------------------------------------------------------------------------------------------
 
   dveg = idveg
@@ -11078,6 +11266,7 @@ END SUBROUTINE EMERG
   opt_irrm = iopt_irrm
   opt_infdv= iopt_infdv
   opt_tdrn = iopt_tdrn
+  opt_root = iopt_root
  
   end subroutine noahmp_options
  
