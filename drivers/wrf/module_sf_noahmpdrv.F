@@ -831,7 +831,8 @@ CONTAINS
          PRCPHAIL  = 0.
        ENDIF
 
-       INACTIVE              = 0.0                          ! number of timesteps with inactive roots
+       INACTIVE(1)           = 0.0                          ! number of timesteps with inactive roots
+       INACTIVE(2:NSOIL)     = 366.0*(86400./DT)      
 
 ! IN/OUT fields
 
@@ -2610,7 +2611,7 @@ SUBROUTINE PEDOTRANSFER_SR2006(nsoil,sand,clay,orgm,parameters)
 ! local
     INTEGER  :: I,J,K,ITER,itf,jtf, NITER, NCOUNT,NS
     REAL :: BEXP
-    REAL :: FRLIQ,SMCEQDEEP,SMCMAXDEEP,DKSATDEEP,PSISATDEEP ! Soil parameters for deep variably thick layer
+    REAL :: FRLIQ,SMCEQDEEP,SMCMAXDEEP,SMCWLTDEEP,DKSATDEEP,PSISATDEEP ! Soil parameters for deep variably thick layer
     REAL :: SMCBELOW, FK, mid ! Needed to initialize deep soil layers
     LOGICAL                   :: FILLLAYERS
     REAL, PARAMETER           :: intdepth = -22.5   ! Depth used to calculate soil parameters
@@ -2793,6 +2794,7 @@ EQWTD=WTD
              ! For deep variably thick layer
              PSISATDEEP  = -PSISAT_TABLE(ISLTYP(I,J)) * min(max(exp(-(intdepth+1.5)/FDEPTH(I,J)),1.),  10.) 
              SMCMAXDEEP  = SMCMAX_TABLE(ISLTYP(I,J))  * max(min(exp((intdepth+1.5)/FDEPTH(I,J)),1.), 0.1) 
+             SMCWLTDEEP  = SMCWLT_TABLE(ISLTYP(I,J))  * max(min(exp((intdepth+1.5)/FDEPTH(I,J)),1.), 0.1)
              DKSATDEEP   = DKSAT_TABLE(ISLTYP(I,J))   * max(min(exp((intdepth+1.5)/FDEPTH(I,J)),1.), 0.1) 
 
              ! add urban flag to include LCZ
@@ -2847,7 +2849,7 @@ EQWTD=WTD
              ELSEIF(WTD(I,J) < ZSOIL(NSOIL))THEN
                   SMCEQDEEP = SMCMAX(NSOIL) * ( PSISAT(NSOIL) / ( PSISAT(NSOIL) - DZS(NSOIL) ) ) ** (1./BEXP)
 !                  SMCEQDEEP = MAX(SMCEQDEEP,SMCWLT)
-                  SMCEQDEEP = MAX(SMCEQDEEP,1.E-4)
+                  SMCEQDEEP = MAX(SMCEQDEEP,SMCWLTDEEP)
                   SMCWTDXY(I,J) = SMCMAXDEEP * ((WTD(I,J) -  (ZSOIL(NSOIL)-DZS(NSOIL)))/DZS(NSOIL)) + &
                                   SMCEQDEEP * ((ZSOIL(NSOIL) - WTD(I,J))/DZS(NSOIL))
                                                                          
@@ -2901,7 +2903,7 @@ EQWTD=WTD
                       SMC = SMC - DX       ! Get new value for SMC
                       IF ( ABS (DX) < 1.E-6)EXIT  ! Exit once DX is sufficiently small
                     ENDDO
-                    SMOIS(I,K,J) = MAX(SMC,1.E-4)
+                    SMOIS(I,K,J) = MAX(SMC,SMCWLT(K))
                  ENDDO
              ! Fill in SM where water table is within resolved soil layers
              ELSEIF (WTD(I,J) .GE. ZSOIL(NSOIL)) THEN 
@@ -2933,7 +2935,7 @@ EQWTD=WTD
                           SMC = SMC - DX   ! Get new value for SMC
                           IF ( ABS (DX) < 1.E-6)EXIT ! Exit once X is sufficently small
                         ENDDO
-                        SMOIS(I,NS,J) = MAX(SMC,1E-4)
+                        SMOIS(I,NS,J) = MAX(SMC,SMCWLT(K))
                      ENDDO
                    ENDIF
                 ENDDO

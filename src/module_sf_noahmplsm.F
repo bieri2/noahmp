@@ -2256,7 +2256,7 @@ ENDIF   ! CROPTYPE == 0
            ENDIF
 
          ! Calculate PSI
-           PSIZ(IZ) = MAX(PSIWLT,-parameters%PSISAT(IZ)*(MAX(0.01,SH2O(IZ))/parameters%SMCMAX(IZ))**(-parameters%BEXP(IZ)) )
+           PSIZ(IZ) = MAX(PSIWLT,-parameters%PSISAT(IZ)*(SH2O(IZ)/parameters%SMCMAX(IZ))**(-parameters%BEXP(IZ)) )
 
            if(INACTIVEDAYS(IZ).le.MAXINACTIVEDAYS) ROOTMASK(IZ) = 1    ! Set root mask accordingly
 
@@ -2286,6 +2286,9 @@ ENDIF   ! CROPTYPE == 0
          TOTEASY = SUM(EASY*DZSROOT(1:NSOIL))
          IF(TOTEASY .eq. 0.)THEN
            ROOTACTIVITY = 0.
+
+           !BTRAN = MPE
+           !BTRANI(1:parameters%NROOT) = BTRANI(1:parameters%NROOT)/BTRAN
          ELSE
            ROOTACTIVITY = MIN(MAX((EASY*DZSROOT(1:NSOIL)) / TOTEASY , 0. ), 1. )
          ENDIF
