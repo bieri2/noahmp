@@ -575,6 +575,7 @@ CONTAINS
     INTEGER                             :: GWRD         ! root water uptake depth [m]
     REAL                                :: FDEPTH       ! e-folding depth of permeability decrease [m] 
     REAL, DIMENSION(1 : NSOIL)          :: BTRANI       ! beta factor for soil moisture stress (0 - 1)
+    REAL                                :: PSIREF       ! matric potential at field capacity
 
     REAL                                :: QINTS
     REAL                                :: QINTR
@@ -1075,6 +1076,7 @@ CONTAINS
          PSISATtop = parameters%PSISAT(1)
          DKSATtop  = parameters%DKSAT(1)
          SMCWLTtop = parameters%SMCWLT(1)
+         PSIREF = 3.366
          ! Calculate soil parameters for each layer
          ! Use depth of layer midpoints below 1.5 m 
          parameters%SMCMAX(K) = SMCMAXtop * max(min(exp((mid+1.5) /FDEPTH),1.), 0.1) 
@@ -1085,7 +1087,9 @@ CONTAINS
          ! dwsat = (dksat*psisat*b)/smcmax 
          parameters%DWSAT(K)  = (parameters%DKSAT(K) * parameters%PSISAT(K) * parameters%BEXP(K)) &
                                  /parameters%SMCMAX(K) 
+         parameters%SMCREF(K) = parameters%SMCMAX(K) * ( parameters%PSISAT(K) / PSIREF ) ** ( 1. / parameters%BEXP(K) )
 
+if(i.eq.1.and.j.eq.33)write(6,*)'mirar parameters',i,j,k,parameters%SMCMAX(K),parameters%SMCWLT(K),parameters%DKSAT(K),parameters%PSISAT(K),parameters%DWSAT(K),parameters%SMCREF(K)
        END DO
 
 !=== hydrological processes for vegetation in urban model ===
@@ -2789,6 +2793,7 @@ EQWTD=WTD
                 ! dwsat = (dksat*psisat*b)/smcmax 
                 DWSAT(K)  = (DKSAT(K) * -PSISAT(K) * BEXP)/SMCMAX(K)               
 
+if(i.eq.1.and.j.eq.33)write(6,*)'mirar eqsmoi',i,j,k,smcmax(k),smcwlt(k),dksat(k),psisat(k),dwsat(k)
              END DO 
 
              ! For deep variably thick layer
@@ -2817,7 +2822,9 @@ EQWTD=WTD
 
              SMOISEQ (I,1:NSOIL,J) = SMCEQ (1:NSOIL)
 
-
+do k=1,nsoil
+if(i.eq.1.and.j.eq.33)write(6,*)'mirar eqsmoi 2',i,j,k,smceq(k)
+enddo
               !make sure that below the water table the layers are saturated and initialize the deep soil moisture
              IF(WTD(I,J) < ZSOIL(NSOIL)-DZS(NSOIL)) THEN
 

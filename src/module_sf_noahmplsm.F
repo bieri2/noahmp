@@ -992,7 +992,7 @@ contains
                  EFLXB, HCPCT, ACC_SSOIL, &
                  JULIAN, SWDOWN, PRCP, FB, GECROS1D, &
                  EASY   , ROOTACTIVITY  , ZWT   , INACTIVE, KROOT,& ! Root scheme 
-                 KWTD   , PSI   )        
+                 KWTD   , PSI  , ROOT_UPDATE )        
 !jref:end
 
     SICE(:) = MAX(0.0, SMC(:) - SH2O(:))   
@@ -1022,7 +1022,7 @@ contains
                  QSNBOT ,QTLDRN ,                                 &
                  QSNSUB ,QSNFRO ,QSUBC  ,QFROC  ,QFRZC  ,QMELTC , &
                  QEVAC  ,QDEWC  ,ACC_QINSUR ,ACC_QSEVA,ACC_ETRANI,&
-                 ROOTACTIVITY, GWRD, FDEPTH,ROOT_UPDATE& ! Root scheme
+                 ROOTACTIVITY, GWRD, FDEPTH,ROOT_UPDATE, KROOT & ! Root scheme
 #ifdef WRF_HYDRO
                         ,sfcheadrt,WATBLED                        &
 #endif
@@ -1785,7 +1785,8 @@ ENDIF   ! CROPTYPE == 0
 		     SHG,SHC,SHB,EVG,EVB,GHV,GHB,IRG,IRC,IRB,TR,EVC,CHLEAF,CHUC,CHV2,CHB2, &
                      EFLXB  ,HCPCT  ,ACC_SSOIL, &
                      JULIAN, SWDOWN, PRCP, FB, GECROS1D, &
-                     EASY, ROOTACTIVITY, ZWT, INACTIVE, KROOT, KWTD, PSIZ) ! Root scheme
+                     EASY, ROOTACTIVITY, ZWT, INACTIVE, KROOT, KWTD, &
+                     PSIZ, ROOT_UPDATE) ! Root scheme
 !jref:end                            
 
 ! --------------------------------------------------------------------------------------------------
@@ -2017,6 +2018,9 @@ ENDIF   ! CROPTYPE == 0
   REAL,   DIMENSION(1:NSOIL),INTENT(INOUT)          :: PSIZ            ! soil matric potential (m)
   REAL                                              :: MID             ! depth of layer midpoints (m)
   REAL,   DIMENSION(1:NSOIL)                        :: DZSROOT         ! layer thickness defined in root scheme (m)
+  INTEGER                                           :: NROOT           ! layer index of root zone 
+  LOGICAL, INTENT(IN)                               :: ROOT_UPDATE  !if TRUE, update model variables based on root scheme
+  REAL                                              :: SMCWLT        ! soil moisture at wilting point
 
 ! temperature and fluxes over vegetated fraction
 
@@ -2067,7 +2071,8 @@ ENDIF   ! CROPTYPE == 0
 
   REAL, PARAMETER                   :: MPE    = 1.E-6
   REAL, PARAMETER                   :: PSIWLT = -150.0  !metric potential for wilting point (m)
-  REAL, PARAMETER                   :: PSILF  = -204.0  ! leaf wilting point matric potential (m) 
+!  REAL, PARAMETER                   :: PSILF  = -204.0  ! leaf wilting point matric potential (m) 
+  REAL, PARAMETER                   :: PSILF  = -150.0 ! leaf wilting point matric potential (m) 
   REAL, PARAMETER                   :: Z0     = 0.002   ! Bare-soil roughness length (m) (i.e., under the canopy)
 
 
@@ -2201,28 +2206,10 @@ ENDIF   ! CROPTYPE == 0
      BTRAN  = 0.0
      BTRANI = 0.0
 
+
      IF(IST ==1 ) THEN
-       DO IZ = 1, parameters%NROOT
-          IF(OPT_BTR == 1) then                  ! Noah
-            GX    = (SH2O(IZ)-parameters%SMCWLT(IZ)) / (parameters%SMCREF(IZ)-parameters%SMCWLT(IZ))
-          END IF
-          IF(OPT_BTR == 2) then                  ! CLM
-            PSI   = MAX(PSIWLT,-parameters%PSISAT(IZ)*(MAX(0.01,SH2O(IZ))/parameters%SMCMAX(IZ))**(-parameters%BEXP(IZ)) )
-            GX    = (1.0-PSI/PSIWLT)/(1.0+parameters%PSISAT(IZ)/PSIWLT)
-          END IF
-          IF(OPT_BTR == 3) then                  ! SSiB
-            PSI   = MAX(PSIWLT,-parameters%PSISAT(IZ)*(MAX(0.01,SH2O(IZ))/parameters%SMCMAX(IZ))**(-parameters%BEXP(IZ)) )
-            GX    = 1.0-EXP(-5.8*(LOG(PSIWLT/PSI))) 
-          END IF
-       
-          GX = MIN(1.0,MAX(0.0,GX))
-          BTRANI(IZ) = MAX(MPE,DZSNSO(IZ) / (-ZSOIL(parameters%NROOT)) * GX)
-          BTRAN      = BTRAN + BTRANI(IZ)
-       END DO
-       BTRAN = MAX(MPE,BTRAN)
 
-       BTRANI(1:parameters%NROOT) = BTRANI(1:parameters%NROOT)/BTRAN
-
+     NROOT = parameters%NROOT
 
      ! Root water uptake scheme (Fan et al. 2017) ------------------------------------------------
 
@@ -2230,14 +2217,20 @@ ENDIF   ! CROPTYPE == 0
        ! Determine layer where water table is located, if within resolved soil layers
          DZSROOT       = DZSNSO(1:NSOIL) ! Soil thickness variable just for use in root scheme
 
-         IF(ZWT .lt. ZSOIL(NSOIL)) THEN  ! Set KWTD to NSOIL if water table below resolved layers
+         IF(ZWT + 1.0E-6 .lt. ZSOIL(NSOIL)) THEN  ! Set KWTD to NSOIL if water table below resolved layers
             KWTD = NSOIL
          ELSE
-            DO IZ = 1, NSOIL             ! Find exact layer with water table if within resolved layers
-               if(ZWT .gt. ZSOIL(IZ))exit
-            END DO
-            KWTD = MIN(IZ,NSOIL)   ! Layer with water table
-            IWTD = KWTD-1          ! Layer above water table
+!            DO IZ = 1, NSOIL             ! Find exact layer with water table if within resolved layers
+!               if(ZWT .gt. ZSOIL(IZ))exit
+!            END DO
+!            KWTD = MIN(IZ,NSOIL)   ! Layer with water table
+!            IWTD = KWTD-1          ! Layer above water table
+
+            DO IZ=NSOIL,1,-1
+                 IF(ZWT + 1.0E-6 < ZSOIL(IZ)) EXIT
+            ENDDO
+            IWTD=IZ
+            KWTD= MIN(IWTD+1,NSOIL)  !layer where the water table is
 
             ! Adjust layer thickness accordingly
             IF (IWTD .ge. 1) DZSROOT(KWTD) = -1*(ZWT-ZSOIL(IWTD))
@@ -2246,10 +2239,10 @@ ENDIF   ! CROPTYPE == 0
        ! Determine layers with active roots - depth of root zone
 
          INACTIVEDAYS(1:NSOIL) = INACTIVE(1:NSOIL)*DT ! Convert # of inactive timesteps to inactive days (in seconds)
-         DO IZ = 1, NSOIL
-          if(INACTIVEDAYS(IZ) .gt. MAXINACTIVEDAYS)exit
+         DO IZ =  NSOIL,1,-1
+          if(INACTIVEDAYS(IZ) .le. MAXINACTIVEDAYS)exit
          END DO
-         KROOT = MIN(MAX(IZ-1,1),NSOIL) ! Bottom layer of root zone
+         KROOT = MIN(MAX(IZ,1),NSOIL) ! Bottom layer of root zone
 
          HCAN  = parameters%HVT*(2./3.) ! Canopy height
 
@@ -2288,6 +2281,10 @@ ENDIF   ! CROPTYPE == 0
          DO IZ = 1, MIN(KROOT+1,NSOIL)
            if(INACTIVEDAYS(IZ) .gt. MAXINACTIVEDAYS .and. EASY(IZ) .lt. MAXEASY) EASY(IZ) = 0.
          ENDDO
+         !update root zone index
+         IF(KROOT.LT.NSOIL)THEN
+            IF(EASY(KROOT+1).GT.0.)KROOT=KROOT+1
+         ENDIF
 
          ! Calculate root activity
          TOTEASY = SUM(EASY*DZSROOT(1:NSOIL))
@@ -2310,10 +2307,38 @@ ENDIF   ! CROPTYPE == 0
          ENDDO
 
          INACTIVEDAYS = MIN(INACTIVEDAYS,MAXINACTIVEDAYS+1)
-    
+
+         IF (ROOT_UPDATE==.TRUE.)THEN
+              NROOT = KROOT
+         ELSE
+              NROOT = parameters%NROOT
+         ENDIF
+
        ENDIF
 
      ! /CB - end of roots ---------------------------------------------------------
+
+       DO IZ = 1, NROOT
+          IF(OPT_BTR == 1) then                  ! Noah
+            SMCWLT = parameters%SMCMAX(IZ) * ( -parameters%PSISAT(IZ) / PSIWLT )**( 1. / parameters%BEXP(IZ) )
+            GX    = (SH2O(IZ)-SMCWLT) / (parameters%SMCREF(IZ)-SMCWLT)
+          END IF
+          IF(OPT_BTR == 2) then                  ! CLM
+            PSI   = MAX(PSIWLT,-parameters%PSISAT(IZ)*(MAX(0.01,SH2O(IZ))/parameters%SMCMAX(IZ))**(-parameters%BEXP(IZ)) )
+            GX    = (1.0-PSI/PSIWLT)/(1.0+parameters%PSISAT(IZ)/PSIWLT)
+          END IF
+          IF(OPT_BTR == 3) then                  ! SSiB
+            PSI   = MAX(PSIWLT,-parameters%PSISAT(IZ)*(MAX(0.01,SH2O(IZ))/parameters%SMCMAX(IZ))**(-parameters%BEXP(IZ)) )
+            GX    = 1.0-EXP(-5.8*(LOG(PSIWLT/PSI)))
+          END IF
+
+          GX = MIN(1.0,MAX(0.0,GX))
+          BTRANI(IZ) = MAX(MPE,DZSNSO(IZ) / (-ZSOIL(NROOT)) * GX)
+          BTRAN      = BTRAN + BTRANI(IZ)
+       END DO
+       BTRAN = MAX(MPE,BTRAN)
+
+       BTRANI(1:NROOT) = BTRANI(1:NROOT)/BTRAN
 
      END IF
 
@@ -6111,7 +6136,7 @@ ENDIF   ! CROPTYPE == 0
                     QSNBOT ,QTLDRN ,                                 &
                     QSNSUB ,QSNFRO ,QSUBC  ,QFROC  ,QFRZC  ,QMELTC , &
                     QEVAC  ,QDEWC  ,ACC_QINSUR,ACC_QSEVA ,ACC_ETRANI,&
-                    ROOTACTIVITY, GWRD, FDEPTH,ROOT_UPDATE& ! Root scheme
+                    ROOTACTIVITY, GWRD, FDEPTH,ROOT_UPDATE, KROOT& ! Root scheme
 #ifdef WRF_HYDRO
                         ,sfcheadrt ,WATBLED                          &
 #endif
@@ -6159,6 +6184,7 @@ ENDIF   ! CROPTYPE == 0
   REAL, DIMENSION(       1:NSOIL), INTENT(IN)    :: ROOTACTIVITY ! Root activity function
   REAL                           , INTENT(IN)    :: FDEPTH       ! E-folding depth of permeability 
   LOGICAL                        , INTENT(IN)    :: ROOT_UPDATE  ! if TRUE, update model variables based on root scheme
+  INTEGER                        , INTENT(IN)    :: KROOT           ! layer depth of root zone (-)  
 
 ! input/output
   INTEGER,                         INTENT(INOUT) :: ISNOW   !actual no. of snow layers
@@ -6326,7 +6352,7 @@ ENDIF   ! CROPTYPE == 0
 
     IF (OPT_ROOT == 2) THEN 
          IF (ROOT_UPDATE==.TRUE.) THEN                                 ! If model running for at least 1yr,
-             DO IZ = 1, parameters%NROOT                               ! Use root activity function instead of beta
+             DO IZ = 1, KROOT                                           ! Use root activity function instead of beta
                    ETRANI(IZ) = ETRAN * ROOTACTIVITY(IZ) * 0.001        
              ENDDO
 
@@ -7983,6 +8009,8 @@ ENDIF   ! CROPTYPE == 0
           DSMDZ(K) = 2.0 * (SMX(K) - SMX(K+1)) / TEMP1
           WFLUX(K) = WDF(K  ) * DSMDZ(K  ) + WCND(K  )         &
                    - WDF(K-1) * DSMDZ(K-1) - WCND(K-1) + ETRANI(K)
+
+if(iloc.eq.1.and.jloc.eq.33)write(6,*)'mirar 6',k,WFLUX(K),WDF(K),WDF(K  ) * DSMDZ(K  ), WCND(K  ),ETRANI(K),ZSOIL(K)                   
        ELSE
           DENOM(K) = (ZSOIL(K-1) - ZSOIL(K))
           IF(OPT_RUN == 1 .or. OPT_RUN == 2) THEN
@@ -8103,6 +8131,12 @@ ENDIF   ! CROPTYPE == 0
         SH2O(K) = SH2O(K) + CI(K)
     ENDDO
 
+!    DO K = 1,NSOIL
+!if(iloc.eq.1.and.jloc.eq.33)write(6,*)'mirar 3',SH2O(K), RHSTTIN(k)
+!    ENDDO
+
+if(iloc.eq.1.and.jloc.eq.33)write(6,*)'mirar 3',SH2O(3),SH2O(4),SH2O(5)
+
 !  excessive water above saturation in a layer is moved to
 !  its unsaturated layer like in a bucket
 
@@ -8134,7 +8168,9 @@ ENDIF   ! CROPTYPE == 0
       WPLUS        = MAX((SH2O(K)-EPORE), 0.0) * DZSNSO(K)
       SH2O(K)      = MIN(EPORE,SH2O(K))
       SH2O(K-1)    = SH2O(K-1) + WPLUS/DZSNSO(K-1)
+if(iloc.eq.1.and.jloc.eq.33)write(6,*)'mirar 4',k,SH2O(k),SH2O(K-1),WPLUS
     END DO
+
 
     EPORE        = MAX ( 1.0E-4 , ( parameters%SMCMAX(1) - SICE(1) ) )
     WPLUS        = MAX((SH2O(1)-EPORE), 0.0) * DZSNSO(1) 
@@ -8153,8 +8189,10 @@ ENDIF   ! CROPTYPE == 0
     WPLUS        = MAX((SH2O(NSOIL)-EPORE), 0.0) * DZSNSO(NSOIL) 
     SH2O(NSOIL)  = MIN(EPORE,SH2O(NSOIL))
    END IF
-   
+
+if(iloc.eq.1.and.jloc.eq.33)write(6,*)'mirar 5',SH2O(3),SH2O(4),SH2O(5)
     SMC = SH2O + SICE
+
 
   END SUBROUTINE SSTEP
 
@@ -10009,6 +10047,11 @@ ZSOIL0(0) = 0.0
         KWTD=IWTD+1  !layer where the water table is
         IF(KWTD.LE.NSOIL)THEN    !wtd in the resolved layers
            WTDOLD=WTD
+
+if(iloc.eq.1.and.jloc.eq.33)write(6,*)'mirar 0',wtd,iwtd,kwtd,zsoil0(iwtd),zsoil0(kwtd)
+if(iloc.eq.1.and.jloc.eq.33)write(6,*)'mirar 1',smc(kwtd),smceq(kwtd),parameters%SMCMAX(KWTD)
+if(iloc.eq.1.and.jloc.eq.33)write(6,*)'mirar 2',smc(kwtd+1),smceq(kwtd+1),parameters%SMCMAX(KWTD+1)
+
            IF(SMC(KWTD).GT.SMCEQ(KWTD))THEN
         
                IF(SMC(KWTD).EQ.parameters%SMCMAX(KWTD))THEN !wtd went to the layer above
